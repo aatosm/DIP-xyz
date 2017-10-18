@@ -26,34 +26,46 @@ case class Photo(id: String,
                  
 object Flickr extends Flickr {
 
-  @transient lazy val conf: SparkConf = new SparkConf().setMaster("local").setAppName("NYPD")
+  @transient lazy val conf: SparkConf = new SparkConf().setMaster("local").setAppName("Flickr")
   @transient lazy val sc: SparkContext = new SparkContext(conf)
 
   /** Main function */
   def main(args: Array[String]): Unit = {
 
     val lines   = sc.textFile("src/main/resources/photos/dataForBasicSolution.csv")
-    val raw     = lines.flatMap(line => line.split(", ")).map(i => Photo(i(0).toString, i(1).toDouble, i(2).toDouble))
+    val raw     = lines.mapPartitionsWithIndex((i, it) => if (i == 0) it.drop(1) else it).map(line => line.split(", ")).map(i => Photo(i(0).toString, i(1).toDouble, i(2).toDouble))
     
-    val initialMeans = initializeMeans(raw)
+    val initialMeans = initializeMeans(kmeansKernels, raw)
     val means   = kmeans(initialMeans, raw)   
     
+    println("alkup:")
+    initialMeans.foreach { mean => 
+      println(mean._1 + "," + mean._2)
+    }
+    
+    println("lasketut:")
+    means.foreach { mean => 
+      println(mean._1 + "," + mean._2)
+    }
+    
+    sc.stop()
   }
+  
+  
 }
 
 
 class Flickr extends Serializable {
   
 /** K-means parameter: Convergence criteria */
-  val kmeansEta: Double = 20.0D
+  def kmeansEta: Double = 20.0D
   
   /** K-means parameter: Number of clusters */
-  val kmeansKernels = 16  
+  def kmeansKernels = 8  
   
   /** K-means parameter: Maximum iterations */
-  val kmeansMaxIterations = 50
+  def kmeansMaxIterations = 50
   
-  var kmeansCurrentIteration = 0
 
   //(lat, lon)
   def distanceInMeters(c1: (Double, Double), c2: (Double, Double)) = {
@@ -81,43 +93,55 @@ class Flickr extends Serializable {
     }
     bestIndex
   }
+   
   
-  def initializeMeans(photoRDD: RDD[Photo]): Array[(Double, Double)] = {
-    val means = Array((60.5D, 22.0D), (61.5D, 24.0D))
-    means
+  def initializeMeans(k: Int, photoRDD: RDD[Photo]): Array[(Double, Double)] = {   
+    
+    val means = photoRDD.takeSample(false, k, 23)
+    means.map(m => (m.latitude, m.longitude)).toArray
   }
   
-  def classify(means: Array[(Double, Double)], vectors: RDD[Photo]): RDD[(Int, Photo)] = {
-    val meanPhotoRdd = vectors.map(photo => (findClosest((photo.latitude, photo.longitude), means), photo))
-    meanPhotoRdd
+  def classify(means: Array[(Double, Double)], vectors: RDD[Photo]): RDD[((Double, Double), Iterable[Photo])] = {
+    
+    //val meanPhotoRdd = vectors.map(photo => (findClosest((photo.latitude, photo.longitude), means), photo))
+    
+    val grouppedRdd = vectors.groupBy(photo => means(findClosest((photo.latitude, photo.longitude), means)))    
+    grouppedRdd
   }
   
-  def update(classified: RDD[(Int, Photo)], oldMeans: Array[(Double, Double)]): Array[(Double, Double)] = {
-    var ab = ArrayBuffer[(Double, Double)]()
-    val newRdd = classified.map(tuple => (tuple._1, (tuple._2.latitude, tuple._2.longitude)))
-    for (i <- 0 to oldMeans.length) {
-       val pointsMappedToCenter = newRdd.filter(tuple => tuple._1 == i)
-       val pointsCount = pointsMappedToCenter.count
-       val sumOfCurrentPoints = pointsMappedToCenter.reduceByKey((x, y) => (x._1 + y._1, x._2 + y._2)).first
-       val averageOfPoints = ((sumOfCurrentPoints._2._1 / pointsCount), (sumOfCurrentPoints._2._2 / pointsCount))
-       ab += averageOfPoints
+  def averageVectors(ps: Iterable[Photo]): (Double, Double) = {
+    var lat = 0.0
+    var lon = 0.0
+    
+    ps.foreach { photo =>
+      lat += photo.latitude
+      lon += photo.longitude      
     }
-    val arrayOfNewMeans = ab.toArray
-    arrayOfNewMeans
+    
+    ((lat / ps.size), (lon / ps.size))
+  }
+  
+  def update(classified: RDD[((Double, Double), Iterable[Photo])], oldMeans: Array[(Double, Double)]): Array[(Double, Double)] = {
+    
+    oldMeans.map(mean => averageVectors(classified.filter(g => g._1 == mean)
+        .map(g => g._2)
+        .first()))
     
   }
   
   def converged(oldMeans: Array[(Double, Double)], newMeans: Array[(Double, Double)]): Boolean = {
+    (oldMeans zip newMeans).forall {
+      case (oldMean, newMean) => distanceInMeters(oldMean, newMean) <= kmeansEta
+    }
     
   }
     
-  @tailrec final def kmeans(means: Array[(Double, Double)], vectors: RDD[Photo]): Array[(Double, Double)] = {
+  @tailrec final def kmeans(means: Array[(Double, Double)], vectors: RDD[Photo], iter: Int = 1): Array[(Double, Double)] = {
     val classified = classify(means, vectors)
     val newMeans = update(classified, means)
     
-    if (!converged(means, newMeans)) {
-      kmeansCurrentIteration += 1
-      kmeans(newMeans, vectors)
+    if (!converged(means, newMeans) && iter < kmeansMaxIterations) {
+      kmeans(newMeans, vectors, iter+1)
     } else {
       newMeans
     }
