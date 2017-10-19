@@ -30,8 +30,14 @@ object Flickr extends Flickr {
   /** Main function */
   def main(args: Array[String]): Unit = {
 
-    /** read .csv data into String-RDD */
-    val lines = sc.textFile("src/main/resources/photos/dataForBasicSolution.csv")
+    /** Sample .csv files in array */
+    val files = Array("src/main/resources/photos/dataForBasicSolution.csv",  // 0
+                      "src/main/resources/photos/flickrDirtySimple.csv",     // 1
+                      "src/main/resources/photos/flickr3D.csv",              // 2
+                      "src/main/resources/photos/elbow.csv")                 // 3
+    
+    /** read .csv data into String-RDD, access file with array index */
+    val lines = sc.textFile(files(1))
     
     /** filter out the first header-line and map String-RDD into Photo-RDD */
     val linesWithoutHeader = lines.mapPartitionsWithIndex((i, it) => if (i == 0) it.drop(1) else it)
