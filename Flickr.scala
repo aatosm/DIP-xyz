@@ -15,8 +15,6 @@ import java.text.SimpleDateFormat
 import Math._
 
 import scala.util.Random
-import scala.collection.mutable.ArrayBuffer
-
 
 case class Photo(id: String,
                  latitude: Double,
@@ -32,26 +30,37 @@ object Flickr extends Flickr {
   /** Main function */
   def main(args: Array[String]): Unit = {
 
+    /** read .csv data into String-RDD */
     val lines   = sc.textFile("src/main/resources/photos/dataForBasicSolution.csv")
-    val raw     = lines.mapPartitionsWithIndex((i, it) => if (i == 0) it.drop(1) else it).map(line => line.split(", ")).map(i => Photo(i(0).toString, i(1).toDouble, i(2).toDouble))
     
+    /** filter out the first header-line and map String-RDD into Photo-RDD */
+    val raw     = lines.mapPartitionsWithIndex((i, it) => if (i == 0) it.drop(1) else it)
+                    .map(line => line.split(", "))
+                    .map(i => Photo(i(0).toString, i(1).toDouble, i(2).toDouble))
+    
+    /** initialize k starting points randomly from the Photo-RDD */
     val initialMeans = initializeMeans(kmeansKernels, raw)
+    
+    /** run k-means algorithm */
     val means   = kmeans(initialMeans, raw)   
     
-    println("alkup:")
+    /** output prints */
+    println("\nInitialized means (k=" + kmeansKernels + "):")
     initialMeans.foreach { mean => 
-      println(mean._1 + "," + mean._2)
+      println(mean._1 + ", " + mean._2)
     }
     
-    println("lasketut:")
+    println("-------------------------")
+    
+    println("K-means algorithm output:")
     means.foreach { mean => 
-      println(mean._1 + "," + mean._2)
+      println(mean._1 + ", " + mean._2)
     }
+    
+    println("-------------------------")
     
     sc.stop()
-  }
-  
-  
+  }  
 }
 
 
@@ -93,23 +102,28 @@ class Flickr extends Serializable {
     }
     bestIndex
   }
-   
   
+  
+  /** initialize means with takeSample: Returns a fixed-size sampled subset of Photo-RDD in an array */
   def initializeMeans(k: Int, photoRDD: RDD[Photo]): Array[(Double, Double)] = {   
     
-    val means = photoRDD.takeSample(false, k, 23)
+    val means = photoRDD.takeSample(false, k, 23) 
     means.map(m => (m.latitude, m.longitude)).toArray
   }
   
+  
+  /** Photos are groupped by a mean (center) which is closest to its coordinates */
   def classify(means: Array[(Double, Double)], vectors: RDD[Photo]): RDD[((Double, Double), Iterable[Photo])] = {
     
-    //val meanPhotoRdd = vectors.map(photo => (findClosest((photo.latitude, photo.longitude), means), photo))
-    
-    val grouppedRdd = vectors.groupBy(photo => means(findClosest((photo.latitude, photo.longitude), means)))    
-    grouppedRdd
+    val grouppedPhotoMeanRdd = vectors.groupBy(photo => means(findClosest((photo.latitude, photo.longitude), means)))    
+    grouppedPhotoMeanRdd
   }
   
+  
+  /** Sums up total longitude and latitude of every Photo-object and averages them by size of Photo-objects
+   *  --> creates a new mean (center) with averages */
   def averageVectors(ps: Iterable[Photo]): (Double, Double) = {
+    
     var lat = 0.0
     var lon = 0.0
     
@@ -121,22 +135,29 @@ class Flickr extends Serializable {
     ((lat / ps.size), (lon / ps.size))
   }
   
+  
+  /** replaces old means (centers) with new, updated means which are solved with averageVectors() -function */
   def update(classified: RDD[((Double, Double), Iterable[Photo])], oldMeans: Array[(Double, Double)]): Array[(Double, Double)] = {
-    
-    oldMeans.map(mean => averageVectors(classified.filter(g => g._1 == mean)
-        .map(g => g._2)
+               
+    oldMeans.map(matchingMean => averageVectors(classified.filter(group => group._1 == matchingMean)
+        .map(group => group._2)
         .first()))
     
   }
   
+  
+  /** check if the convergence criteria fulfills = distance between every old-new mean pair is less than kmeansEta */
   def converged(oldMeans: Array[(Double, Double)], newMeans: Array[(Double, Double)]): Boolean = {
+    
     (oldMeans zip newMeans).forall {
       case (oldMean, newMean) => distanceInMeters(oldMean, newMean) <= kmeansEta
-    }
-    
+    }    
   }
-    
+  
+  
+  /** tail recursive k-means algorithm */
   @tailrec final def kmeans(means: Array[(Double, Double)], vectors: RDD[Photo], iter: Int = 1): Array[(Double, Double)] = {
+    
     val classified = classify(means, vectors)
     val newMeans = update(classified, means)
     
@@ -144,9 +165,6 @@ class Flickr extends Serializable {
       kmeans(newMeans, vectors, iter+1)
     } else {
       newMeans
-    }
-    
-    
-  }
-    
+    }       
+  }    
 }
