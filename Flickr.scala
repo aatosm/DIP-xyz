@@ -39,15 +39,15 @@ object Flickr extends Flickr {
     /** read .csv data into String-RDD, access file with array index */
     val lines = sc.textFile(files(1))
     
-    /** filter out the first header-line and map String-RDD into Photo-RDD */
+    /** filter out the first header-line */
     val linesWithoutHeader = lines.mapPartitionsWithIndex((i, it) => if (i == 0) it.drop(1) else it)
     
     val dateFormat = new SimpleDateFormat("yyyy:MM:dd HH:mm:ss")
     
-    val dirty = linesWithoutHeader.map(line => Try(line.split(", "))
-                  .map(i => Photo(i(0).toString, i(1).toDouble, i(2).toDouble, dateFormat.parse(i(3)))))
-                  
-    val photoRdd = dirty.filter(_.isSuccess).map(_.get)                
+    /**  map String-RDD into Photo-RDD, only accepts lines with correct Date-format */
+    val dirtyData = linesWithoutHeader.map(line => Try(line.split(", "))
+                      .map(i => Photo(i(0).toString, i(1).toDouble, i(2).toDouble, dateFormat.parse(i(3)))))               
+    val photoRdd = dirtyData.filter(_.isSuccess).map(_.get)                
     
     /** initialize k starting points randomly from the Photo-RDD */
     val initialMeans = initializeMeans(kmeansKernels, photoRdd)
@@ -81,7 +81,7 @@ class Flickr extends Serializable {
   def kmeansEta: Double = 20.0D
   
   /** K-means parameter: Number of clusters */
-  def kmeansKernels = 8  
+  def kmeansKernels = 16  
   
   /** K-means parameter: Maximum iterations */
   def kmeansMaxIterations = 50
