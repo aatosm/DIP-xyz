@@ -14,12 +14,12 @@ import java.util.Date
 import java.text.SimpleDateFormat
 import Math._
 
-import scala.util.Random
+import scala.util.Try
 
 case class Photo(id: String,
                  latitude: Double,
-                 longitude: Double)
-                 //datetime: Date)
+                 longitude: Double,
+                 datetime: Date)
 
                  
 object Flickr extends Flickr {
@@ -31,18 +31,23 @@ object Flickr extends Flickr {
   def main(args: Array[String]): Unit = {
 
     /** read .csv data into String-RDD */
-    val lines   = sc.textFile("src/main/resources/photos/dataForBasicSolution.csv")
+    val lines = sc.textFile("src/main/resources/photos/dataForBasicSolution.csv")
     
     /** filter out the first header-line and map String-RDD into Photo-RDD */
-    val raw     = lines.mapPartitionsWithIndex((i, it) => if (i == 0) it.drop(1) else it)
-                    .map(line => line.split(", "))
-                    .map(i => Photo(i(0).toString, i(1).toDouble, i(2).toDouble))
+    val linesWithoutHeader = lines.mapPartitionsWithIndex((i, it) => if (i == 0) it.drop(1) else it)
+    
+    val dateFormat = new SimpleDateFormat("yyyy:MM:dd HH:mm:ss")
+    
+    val dirty = linesWithoutHeader.map(line => Try(line.split(", "))
+                  .map(i => Photo(i(0).toString, i(1).toDouble, i(2).toDouble, dateFormat.parse(i(3)))))
+                  
+    val photoRdd = dirty.filter(_.isSuccess).map(_.get)                
     
     /** initialize k starting points randomly from the Photo-RDD */
-    val initialMeans = initializeMeans(kmeansKernels, raw)
+    val initialMeans = initializeMeans(kmeansKernels, photoRdd)
     
     /** run k-means algorithm */
-    val means   = kmeans(initialMeans, raw)   
+    val means = kmeans(initialMeans, photoRdd)   
     
     /** output prints */
     println("\nInitialized means (k=" + kmeansKernels + "):")
